@@ -2,51 +2,61 @@ import streamlit as st
 import pandas as pd
 import re
 
-# ---------------------------
-# Language Definition
-# ---------------------------
+st.set_page_config(page_title="Lexical Code Analyzer", layout="wide")
 
-KEYWORDS = {
-    "int","float","double","char","if","else","while","for","return",
-    "break","continue","void","class","public","private","protected",
-    "static","new","try","catch","finally","import","def","True","False"
+# -----------------------------
+# Language Keyword Sets
+# -----------------------------
+
+JAVA_KEYWORDS = {
+"class","public","private","protected","static","void","int","float",
+"double","char","boolean","if","else","switch","case","for","while",
+"do","break","continue","return","new","try","catch","finally","import"
+}
+
+PYTHON_KEYWORDS = {
+"def","return","if","elif","else","for","while","break","continue",
+"import","from","as","class","try","except","finally","with","lambda",
+"True","False","None","pass","yield"
 }
 
 OPERATORS = {
-    "+","-","*","/","=","==","!=","<",">","<=",">=","%","&&","||","!"
+"+","-","*","/","=","==","!=","<",">","<=",">=","%","//","**"
 }
 
 SEPARATORS = {
-    ";",",","(",")","{","}","[","]",".",":"
+";",",","(",")","{","}","[","]",".",":"
 }
 
-# ---------------------------
+# -----------------------------
 # Tokenizer
-# ---------------------------
+# -----------------------------
 
 def tokenize(code):
 
-    token_pattern = r'"[^"]*"|\d+\.\d+|\d+|==|!=|<=|>=|&&|\|\||[A-Za-z_][A-Za-z0-9_]*|[^\s]'
-
+    token_pattern = r'"[^"]*"|\d+\.\d+|\d+|==|!=|<=|>=|\*\*|//|[A-Za-z_][A-Za-z0-9_]*|[^\s]'
     tokens = re.findall(token_pattern, code)
 
     return tokens
 
 
-# ---------------------------
+# -----------------------------
 # Token Classification
-# ---------------------------
+# -----------------------------
 
-def classify_tokens(tokens):
+def classify_tokens(tokens, language):
 
     results = []
     errors = []
 
+    if language == "Java":
+        keywords = JAVA_KEYWORDS
+    else:
+        keywords = PYTHON_KEYWORDS
+
     for token in tokens:
 
-        token_type = "Unknown"
-
-        if token in KEYWORDS:
+        if token in keywords:
             token_type = "Keyword"
 
         elif token in OPERATORS:
@@ -79,74 +89,64 @@ def classify_tokens(tokens):
     return results, errors
 
 
-# ---------------------------
-# Statistics
-# ---------------------------
-
-def generate_statistics(df):
-
-    stats = df["Type"].value_counts()
-
-    return stats
-
-
-# ---------------------------
+# -----------------------------
 # Streamlit UI
-# ---------------------------
+# -----------------------------
 
-st.set_page_config(page_title="Code Analyzer", layout="wide")
+st.title("🧠 Code Lexical Analyzer")
 
-st.title("🧠 Lexical Code Analyzer")
-st.write("Analyze source code tokens, detect lexical errors, and classify elements.")
+st.write("Analyze Java or Python code for token classification and lexical errors.")
+
+# Language dropdown
+language = st.selectbox(
+    "Select Programming Language",
+    ["Python", "Java"]
+)
 
 # Code editor
 code = st.text_area(
-    "Write your code here",
+    "Write or paste your code",
     height=300,
-    placeholder="Type or paste your code..."
+    placeholder="Start typing your code here..."
 )
 
 analyze = st.button("Analyze Code")
 
+# -----------------------------
+# Analysis
+# -----------------------------
+
 if analyze and code:
 
     tokens = tokenize(code)
-
-    results, errors = classify_tokens(tokens)
+    results, errors = classify_tokens(tokens, language)
 
     df = pd.DataFrame(results)
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Token Table")
-        st.dataframe(df)
+        st.subheader("Token Classification")
+        st.dataframe(df, use_container_width=True)
 
     with col2:
-        st.subheader("Statistics")
-        stats = generate_statistics(df)
+        st.subheader("Token Statistics")
+        stats = df["Type"].value_counts()
         st.bar_chart(stats)
 
-    st.subheader("Detected Errors")
+    st.subheader("Error Report")
 
     if errors:
-        st.error(f"{len(errors)} lexical error(s) found")
+        st.error(f"{len(errors)} lexical error(s) detected")
         for e in errors:
             st.write("❌", e)
     else:
         st.success("No lexical errors detected")
 
-    st.subheader("Token Count")
-
     st.write("Total Tokens:", len(tokens))
 
 else:
-    st.info("Enter code and click Analyze")
-
-
-# ---------------------------
-# Footer
-# ---------------------------
+    st.info("Select a language, enter code, and click Analyze")
 
 st.markdown("---")
-st.caption("Educational Code Analyzer built with Streamlit")
+st.caption("Educational Compiler Design Tool built with Streamlit")
