@@ -29,6 +29,26 @@ SEPARATORS = {
 }
 
 # -----------------------------
+# Comment Remover (NEW)
+# -----------------------------
+
+def remove_comments(code, language):
+
+    if language == "Python":
+        # Remove single-line comments (# ...)
+        code = re.sub(r'#.*', '', code)
+
+    elif language == "Java":
+        # Remove single-line comments (// ...)
+        code = re.sub(r'//.*', '', code)
+
+        # Remove multi-line comments (/* ... */)
+        code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+
+    return code
+
+
+# -----------------------------
 # Tokenizer
 # -----------------------------
 
@@ -118,7 +138,10 @@ analyze = st.button("Analyze Code")
 
 if analyze and code:
 
-    tokens = tokenize(code)
+    # ✅ Remove comments before tokenizing
+    clean_code = remove_comments(code, language)
+
+    tokens = tokenize(clean_code)
     results, errors = classify_tokens(tokens, language)
 
     df = pd.DataFrame(results)
