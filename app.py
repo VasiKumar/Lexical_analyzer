@@ -14,6 +14,7 @@ This analyzer handles ALL edge cases in Python and Java lexical analysis:
 - Complete operator sets
 - Unicode identifiers
 - Proper comment-in-string detection
+- RAW STRINGS (r"..." ) support
 - Accurate line/column tracking
 """)
 
@@ -118,10 +119,19 @@ class LexicalAnalyzer:
         return self.tokens
     
     def match_string(self):
-        """Match string literals including multi-line and escape sequences"""
+        """Match string literals including raw strings, multi-line, and escape sequences"""
         start_idx = self.idx
         start_line = self.line
         start_col = self.col
+        
+        # Check for raw strings (r"..." or R"...")
+        is_raw = False
+        if self.language == "Python" and self.idx < len(self.code) and self.code[self.idx].lower() == 'r':
+            # Look ahead to see if it's a raw string (r"..." or r'...')
+            if self.idx + 1 < len(self.code) and self.code[self.idx + 1] in ('"', "'"):
+                is_raw = True
+                self.idx += 1  # Skip the 'r'
+                self.col += 1
         
         if self.language == "Python":
             # Triple-quoted strings
@@ -134,11 +144,18 @@ class LexicalAnalyzer:
                     if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+3] == quote:
                         self.idx += 3
                         self.col += 3
-                        # Validate escapes
-                        if self.validate_escapes(string_content):
-                            self.add_token('String', quote + string_content + quote, start_line, start_col)
+                        full_string = quote + string_content + quote
+                        if is_raw:
+                            # Raw strings: don't validate escapes
+                            self.add_token('RawString' if is_raw else 'String', 
+                                         ('r' if is_raw else '') + full_string, 
+                                         start_line, start_col)
                         else:
-                            self.add_error('Invalid Escape Sequence', quote + string_content + quote, start_line, start_col)
+                            # Validate escapes for normal strings
+                            if self.validate_escapes(string_content):
+                                self.add_token('String', full_string, start_line, start_col)
+                            else:
+                                self.add_error('Invalid Escape Sequence', full_string, start_line, start_col)
                         return True
                     if self.code[self.idx] == '\n':
                         self.line += 1
@@ -148,7 +165,8 @@ class LexicalAnalyzer:
                     string_content += self.code[self.idx]
                     self.idx += 1
                 # Unterminated string
-                self.add_error('Unterminated String', quote + string_content, start_line, start_col)
+                self.add_error('Unterminated String', (('r' if is_raw else '') + quote + string_content), 
+                             start_line, start_col)
                 return True
         
         # Single/double-quoted strings
@@ -158,8 +176,8 @@ class LexicalAnalyzer:
             self.col += 1
             string_content = ""
             while self.idx < len(self.code):
-                if self.code[self.idx] == '\\':
-                    # Handle escape
+                if not is_raw and self.code[self.idx] == '\\':
+                    # Handle escape (but not in raw strings)
                     string_content += '\\'
                     self.idx += 1
                     self.col += 1
@@ -176,15 +194,22 @@ class LexicalAnalyzer:
                     self.idx += 1
                     self.col += 1
                     full_string = quote + string_content + quote
-                    if self.validate_escapes(string_content):
-                        self.add_token('String', full_string, start_line, start_col)
+                    if is_raw:
+                        # Raw string: add as-is, no escape validation
+                        self.add_token('RawString', ('r' if is_raw else '') + full_string, 
+                                     start_line, start_col)
                     else:
-                        self.add_error('Invalid Escape Sequence', full_string, start_line, start_col)
+                        # Normal string: validate escapes
+                        if self.validate_escapes(string_content):
+                            self.add_token('String', full_string, start_line, start_col)
+                        else:
+                            self.add_error('Invalid Escape Sequence', full_string, start_line, start_col)
                     return True
                 if self.code[self.idx] == '\n' and self.language == "Java":
                     # Java strings can't have newlines
                     self.add_error('Unterminated String (Newline in string)', 
-                                 quote + string_content, start_line, start_col)
+                                 (('r' if is_raw else '') + quote + string_content), 
+                                 start_line, start_col)
                     return True
                 if self.code[self.idx] == '\n':
                     self.line += 1
@@ -194,7 +219,8 @@ class LexicalAnalyzer:
                 string_content += self.code[self.idx]
                 self.idx += 1
             # Unterminated
-            self.add_error('Unterminated String', quote + string_content, start_line, start_col)
+            self.add_error('Unterminated String', (('r' if is_raw else '') + quote + string_content), 
+                         start_line, start_col)
             return True
         
         # Java character literals
@@ -306,7 +332,6 @@ class LexicalAnalyzer:
         start_idx = self.idx
         start_line = self.line
         start_col = self.col
-        matched = False
         
         # Hexadecimal
         if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+2].lower() == '0x':
@@ -485,7 +510,7 @@ class LexicalAnalyzer:
 # -----------------------------
 language = st.selectbox("Select Language", ["Python", "Java"])
 code = st.text_area("Enter your code", height=400, 
-                   placeholder="Paste your code here...\n\nTest cases:\n# Comment inside string? \nprint('This # is not a comment')\n\n# Multi-line string\n\"\"\"line1\nline2\nline3\"\"\"\n\n# Numbers\n0x1A 0b101 1.23e-4 1_000_000\n\n# Java octal\n0123\n\n# Unicode\ncafé = 5\n\n# Invalid identifier\n1Name = 5")
+                   placeholder="Paste your code here...\n\nTest cases:\n# Comment inside string? \nprint('This # is not a comment')\n\n# Multi-line string\n\"\"\"line1\nline2\nline3\"\"\"\n\n# Numbers\n0x1A3F 0b101010 0o755 1.23e-4 1_000_000\n\n# Raw string (should NOT show errors)\nr'C:\\Users\\name'\n\n# Invalid identifier\n1name = 5")
 
 analyze = st.button("Analyze Code")
 
