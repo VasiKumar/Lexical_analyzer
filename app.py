@@ -29,20 +29,16 @@ SEPARATORS = {
 }
 
 # -----------------------------
-# Comment Remover (NEW)
+# Comment Remover
 # -----------------------------
 
 def remove_comments(code, language):
 
     if language == "Python":
-        # Remove single-line comments (# ...)
         code = re.sub(r'#.*', '', code)
 
     elif language == "Java":
-        # Remove single-line comments (// ...)
         code = re.sub(r'//.*', '', code)
-
-        # Remove multi-line comments (/* ... */)
         code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
 
     return code
@@ -117,13 +113,11 @@ st.title("🧠 Code Lexical Analyzer")
 
 st.write("Analyze Java or Python code for token classification and lexical errors.")
 
-# Language dropdown
 language = st.selectbox(
     "Select Programming Language",
     ["Python", "Java"]
 )
 
-# Code editor
 code = st.text_area(
     "Write or paste your code",
     height=300,
@@ -138,24 +132,25 @@ analyze = st.button("Analyze Code")
 
 if analyze and code:
 
-    # ✅ Remove comments before tokenizing
     clean_code = remove_comments(code, language)
-
     tokens = tokenize(clean_code)
     results, errors = classify_tokens(tokens, language)
 
-    df = pd.DataFrame(results)
+    if len(results) == 0:
+        st.warning("No tokens found (input may contain only comments or empty code)")
+    else:
+        df = pd.DataFrame(results)
 
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
 
-    with col1:
-        st.subheader("Token Classification")
-        st.dataframe(df, use_container_width=True)
+        with col1:
+            st.subheader("Token Classification")
+            st.dataframe(df, use_container_width=True)
 
-    with col2:
-        st.subheader("Token Statistics")
-        stats = df["Type"].value_counts()
-        st.bar_chart(stats)
+        with col2:
+            st.subheader("Token Statistics")
+            stats = df["Type"].value_counts()
+            st.bar_chart(stats)
 
     st.subheader("Error Report")
 
@@ -166,7 +161,7 @@ if analyze and code:
     else:
         st.success("No lexical errors detected")
 
-    st.write("Total Tokens:", len(tokens))
+    st.write("Total Tokens:", len(tokens) if tokens else 0)
 
 else:
     st.info("Select a language, enter code, and click Analyze")
