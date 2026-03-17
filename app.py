@@ -28,6 +28,8 @@ SEPARATORS = {
 ";",",","(",")","{","}","[","]",".",":"
 }
 
+VALID_ESCAPES = {"\\n","\\t","\\\\","\\'","\\\""}
+
 # -----------------------------
 # Comment Remover
 # -----------------------------
@@ -45,15 +47,47 @@ def remove_comments(code, language):
 
 
 # -----------------------------
-# Tokenizer
+# Tokenizer (Improved)
 # -----------------------------
 
 def tokenize(code):
 
-    token_pattern = r'"[^"]*"|\d+\.\d+|\d+|==|!=|<=|>=|\*\*|//|[A-Za-z_][A-Za-z0-9_]*|[^\s]'
+    token_pattern = r'"[^"\n]*"?|\d+\.\d+\.\d+|\d+\.\d+|\d+|==|!=|<=|>=|\*\*|//|[A-Za-z_][A-Za-z0-9_]*|[^\s]'
     tokens = re.findall(token_pattern, code)
 
     return tokens
+
+
+# -----------------------------
+# Lexical Error Checks
+# -----------------------------
+
+def check_lexical_errors(token):
+
+    # 1. Unterminated string
+    if token.startswith('"') and not token.endswith('"'):
+        return "Unterminated String"
+
+    # 2. Invalid identifier (starts with number but has letters)
+    if re.fullmatch(r'\d+[A-Za-z_]+[A-Za-z0-9_]*', token):
+        return "Invalid Identifier"
+
+    # 3. Invalid number format
+    if re.fullmatch(r'\d+\.\d+\.\d+', token):
+        return "Invalid Number"
+
+    # 4. Invalid escape sequence
+    if token.startswith('"') and token.endswith('"'):
+        escapes = re.findall(r'\\.', token)
+        for e in escapes:
+            if e not in VALID_ESCAPES:
+                return "Invalid Escape Sequence"
+
+    # 5. Illegal character
+    if re.fullmatch(r'[^\w\s]', token) and token not in OPERATORS and token not in SEPARATORS:
+        return "Illegal Character"
+
+    return None
 
 
 # -----------------------------
@@ -65,14 +99,17 @@ def classify_tokens(tokens, language):
     results = []
     errors = []
 
-    if language == "Java":
-        keywords = JAVA_KEYWORDS
-    else:
-        keywords = PYTHON_KEYWORDS
+    keywords = JAVA_KEYWORDS if language == "Java" else PYTHON_KEYWORDS
 
     for token in tokens:
 
-        if token in keywords:
+        error_type = check_lexical_errors(token)
+
+        if error_type:
+            token_type = f"Lexical Error ({error_type})"
+            errors.append(token)
+
+        elif token in keywords:
             token_type = "Keyword"
 
         elif token in OPERATORS:
@@ -94,7 +131,7 @@ def classify_tokens(tokens, language):
             token_type = "Identifier"
 
         else:
-            token_type = "Lexical Error"
+            token_type = "Lexical Error (Unknown)"
             errors.append(token)
 
         results.append({
@@ -111,8 +148,6 @@ def classify_tokens(tokens, language):
 
 st.title("🧠 Code Lexical Analyzer")
 
-st.write("Analyze Java or Python code for token classification and lexical errors.")
-
 language = st.selectbox(
     "Select Programming Language",
     ["Python", "Java"]
@@ -120,8 +155,7 @@ language = st.selectbox(
 
 code = st.text_area(
     "Write or paste your code",
-    height=300,
-    placeholder="Start typing your code here..."
+    height=300
 )
 
 analyze = st.button("Analyze Code")
@@ -137,7 +171,7 @@ if analyze and code:
     results, errors = classify_tokens(tokens, language)
 
     if len(results) == 0:
-        st.warning("No tokens found (input may contain only comments or empty code)")
+        st.warning("No tokens found")
     else:
         df = pd.DataFrame(results)
 
@@ -161,10 +195,10 @@ if analyze and code:
     else:
         st.success("No lexical errors detected")
 
-    st.write("Total Tokens:", len(tokens) if tokens else 0)
+    st.write("Total Tokens:", len(tokens))
 
 else:
-    st.info("Select a language, enter code, and click Analyze")
+    st.info("Enter code and click Analyze")
 
 st.markdown("---")
-st.caption("Educational Compiler Design Tool built with Streamlit")
+st.caption("Improved Lexical Analyzer (Covers all major lexical errors)")
