@@ -14,7 +14,7 @@ This analyzer handles ALL edge cases in Python and Java lexical analysis:
 - Complete operator sets (including '=' assignment)
 - Unicode identifiers
 - Proper comment-in-string detection
-- RAW STRINGS (r"..." ) support
+- RAW STRINGS (r"..." ) and BYTE STRINGS (b"..." ) support
 - Accurate line/column tracking
 """)
 
@@ -41,7 +41,7 @@ PYTHON_KEYWORDS = {
 }
 
 # -----------------------------
-# Complete Operator Sets (Fixed - including '=')
+# Complete Operator Sets
 # -----------------------------
 JAVA_OPERATORS = {
     '=', '+', '-', '*', '/', '%', '++', '--', '==', '!=', '>', '<', '>=', '<=',
@@ -106,28 +106,30 @@ class LexicalAnalyzer:
             matched = (self.match_string() or
                       self.match_comment() or
                       self.match_number() or
-                      self.match_operator() or  # This must come before identifier!
+                      self.match_operator() or
                       self.match_separator() or
                       self.match_identifier() or
                       self.match_error())
             
             if not matched:
-                # Should never happen due to match_error()
                 self.idx += 1
                 self.col += 1
         
         return self.tokens
     
     def match_string(self):
-        """Match string literals including raw strings, multi-line, and escape sequences"""
+        """Match string literals including raw strings, byte strings, f-strings, multi-line"""
         start_idx = self.idx
         start_line = self.line
         start_col = self.col
         
-        # Check for raw strings (r"..." or R"...") and other string prefixes
+        # Check for string prefixes: r, R, f, F, b, B, u, U and combinations
         prefix = ""
+        is_raw = False
+        is_bytes = False
+        
         if self.language == "Python":
-            # Check for string prefixes: r, R, f, F, b, B, u, U
+            # Collect all prefix characters (like rf, br, etc.)
             prefix_chars = []
             while self.idx < len(self.code) and self.code[self.idx].lower() in 'rbfu':
                 prefix_chars.append(self.code[self.idx])
@@ -135,37 +137,50 @@ class LexicalAnalyzer:
                 self.col += 1
             if prefix_chars:
                 prefix = ''.join(prefix_chars)
+                is_raw = 'r' in prefix.lower()
+                is_bytes = 'b' in prefix.lower()
         
-        if self.language == "Python":
-            # Triple-quoted strings
-            if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+3] in ('"""', "'''"):
-                quote = self.code[self.idx:self.idx+3]
-                self.idx += 3
-                self.col += 3
-                string_content = ""
-                while self.idx < len(self.code):
-                    if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+3] == quote:
-                        self.idx += 3
-                        self.col += 3
-                        full_string = quote + string_content + quote
-                        if 'r' in prefix.lower():
-                            self.add_token('RawString', prefix + full_string, start_line, start_col)
+        # Triple-quoted strings
+        if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+3] in ('"""', "'''"):
+            quote = self.code[self.idx:self.idx+3]
+            self.idx += 3
+            self.col += 3
+            string_content = ""
+            while self.idx < len(self.code):
+                if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+3] == quote:
+                    self.idx += 3
+                    self.col += 3
+                    full_string = quote + string_content + quote
+                    
+                    # For byte strings, hex escapes are valid
+                    if is_bytes:
+                        # Validate byte string escapes (hex escapes like \x00 are valid)
+                        if self.validate_byte_escapes(string_content):
+                            self.add_token('ByteString' if is_bytes else 'String', 
+                                         prefix + full_string, start_line, start_col)
                         else:
-                            if self.validate_escapes(string_content):
-                                self.add_token('String', prefix + full_string, start_line, start_col)
-                            else:
-                                self.add_error('Invalid Escape Sequence', prefix + full_string, start_line, start_col)
-                        return True
-                    if self.code[self.idx] == '\n':
-                        self.line += 1
-                        self.col = 1
+                            self.add_error('Invalid Escape Sequence in Byte String', 
+                                         prefix + full_string, start_line, start_col)
+                    elif is_raw:
+                        self.add_token('RawString', prefix + full_string, start_line, start_col)
                     else:
-                        self.col += 1
-                    string_content += self.code[self.idx]
-                    self.idx += 1
-                # Unterminated string
-                self.add_error('Unterminated String', prefix + quote + string_content, start_line, start_col)
-                return True
+                        if self.validate_escapes(string_content):
+                            self.add_token('String', prefix + full_string, start_line, start_col)
+                        else:
+                            self.add_error('Invalid Escape Sequence', prefix + full_string, start_line, start_col)
+                    return True
+                
+                if self.code[self.idx] == '\n':
+                    self.line += 1
+                    self.col = 1
+                else:
+                    self.col += 1
+                string_content += self.code[self.idx]
+                self.idx += 1
+            
+            # Unterminated string
+            self.add_error('Unterminated String', prefix + quote + string_content, start_line, start_col)
+            return True
         
         # Single/double-quoted strings
         if self.idx < len(self.code) and self.code[self.idx] in ('"', "'"):
@@ -173,9 +188,10 @@ class LexicalAnalyzer:
             self.idx += 1
             self.col += 1
             string_content = ""
+            
             while self.idx < len(self.code):
-                if 'r' not in prefix.lower() and self.code[self.idx] == '\\':
-                    # Handle escape (but not in raw strings)
+                # Handle escapes
+                if not is_raw and self.code[self.idx] == '\\':
                     string_content += '\\'
                     self.idx += 1
                     self.col += 1
@@ -188,11 +204,20 @@ class LexicalAnalyzer:
                             self.col += 1
                         self.idx += 1
                     continue
+                
                 if self.code[self.idx] == quote:
                     self.idx += 1
                     self.col += 1
                     full_string = quote + string_content + quote
-                    if 'r' in prefix.lower():
+                    
+                    # Check for byte strings with hex escapes
+                    if is_bytes:
+                        if self.validate_byte_escapes(string_content):
+                            self.add_token('ByteString', prefix + full_string, start_line, start_col)
+                        else:
+                            self.add_error('Invalid Escape Sequence in Byte String', 
+                                         prefix + full_string, start_line, start_col)
+                    elif is_raw:
                         self.add_token('RawString', prefix + full_string, start_line, start_col)
                     else:
                         if self.validate_escapes(string_content):
@@ -200,10 +225,12 @@ class LexicalAnalyzer:
                         else:
                             self.add_error('Invalid Escape Sequence', prefix + full_string, start_line, start_col)
                     return True
+                
                 if self.code[self.idx] == '\n' and self.language == "Java":
                     self.add_error('Unterminated String (Newline in string)', 
                                  prefix + quote + string_content, start_line, start_col)
                     return True
+                
                 if self.code[self.idx] == '\n':
                     self.line += 1
                     self.col = 1
@@ -211,6 +238,7 @@ class LexicalAnalyzer:
                     self.col += 1
                 string_content += self.code[self.idx]
                 self.idx += 1
+            
             # Unterminated
             self.add_error('Unterminated String', prefix + quote + string_content, start_line, start_col)
             return True
@@ -254,7 +282,7 @@ class LexicalAnalyzer:
         return False
     
     def validate_escapes(self, string):
-        """Validate escape sequences in a string"""
+        """Validate escape sequences in a normal string"""
         escapes = re.findall(r'\\.', string)
         valid = JAVA_ESCAPES if self.language == "Java" else PYTHON_ESCAPES
         for e in escapes:
@@ -262,37 +290,45 @@ class LexicalAnalyzer:
                 return False
         return True
     
+    def validate_byte_escapes(self, string):
+        """Validate escape sequences in a byte string (hex escapes like \x00 are valid)"""
+        i = 0
+        while i < len(string):
+            if string[i] == '\\' and i + 1 < len(string):
+                if string[i+1] == 'x':  # Hex escape in byte string
+                    if i + 3 < len(string) and all(c in '0123456789abcdefABCDEF' for c in string[i+2:i+4]):
+                        i += 4
+                        continue
+                    else:
+                        return False
+                elif string[i+1] in 'abfnrtv\\\'"':  # Standard escapes
+                    i += 2
+                    continue
+                else:
+                    return False
+            i += 1
+        return True
+    
     def match_comment(self):
-        """Match comments, ensuring they're not inside strings"""
-        start_idx = self.idx
-        start_line = self.line
-        start_col = self.col
-        
+        """Match comments"""
         if self.language == "Python":
             if self.code[self.idx] == '#':
-                comment = '#'
                 self.idx += 1
                 self.col += 1
                 while self.idx < len(self.code) and self.code[self.idx] != '\n':
-                    comment += self.code[self.idx]
                     self.idx += 1
                     self.col += 1
                 return True
-        
         elif self.language == "Java":
             if self.idx + 1 < len(self.code):
                 if self.code[self.idx:self.idx+2] == '//':
-                    comment = '//'
                     self.idx += 2
                     self.col += 2
                     while self.idx < len(self.code) and self.code[self.idx] != '\n':
-                        comment += self.code[self.idx]
                         self.idx += 1
                         self.col += 1
                     return True
-                
                 elif self.code[self.idx:self.idx+2] == '/*':
-                    comment = '/*'
                     self.idx += 2
                     self.col += 2
                     while self.idx + 1 < len(self.code):
@@ -305,22 +341,20 @@ class LexicalAnalyzer:
                             self.col = 1
                         else:
                             self.col += 1
-                        comment += self.code[self.idx]
                         self.idx += 1
-                    self.add_error('Unterminated Comment', comment, start_line, start_col)
+                    self.add_error('Unterminated Comment', '/*...', self.line, self.col)
                     return True
-        
         return False
     
     def match_number(self):
-        """Match all number formats: decimal, hex, octal, binary, scientific"""
+        """Match all number formats"""
         start_idx = self.idx
         start_line = self.line
         start_col = self.col
         
         # Hexadecimal
         if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+2].lower() == '0x':
-            pattern = r'0[xX][0-9a-fA-F]+'
+            pattern = r'0[xX][0-9a-fA-F]+(?:_[0-9a-fA-F]+)*'
             m = re.match(pattern, self.code[self.idx:])
             if m:
                 val = m.group()
@@ -331,7 +365,7 @@ class LexicalAnalyzer:
         
         # Binary
         if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+2].lower() == '0b':
-            pattern = r'0[bB][01]+'
+            pattern = r'0[bB][01]+(?:_[01]+)*'
             m = re.match(pattern, self.code[self.idx:])
             if m:
                 val = m.group()
@@ -343,7 +377,7 @@ class LexicalAnalyzer:
         # Octal
         if self.language == "Python":
             if self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+2].lower() == '0o':
-                pattern = r'0[oO][0-7]+'
+                pattern = r'0[oO][0-7]+(?:_[0-7]+)*'
                 m = re.match(pattern, self.code[self.idx:])
                 if m:
                     val = m.group()
@@ -363,7 +397,7 @@ class LexicalAnalyzer:
                     return True
         
         # Scientific notation and floats
-        float_pattern = r'\d+\.\d*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?|\d+[eE][+-]?\d+'
+        float_pattern = r'\d+\.\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|\d+[eE][+-]?\d+'
         m = re.match(float_pattern, self.code[self.idx:])
         if m:
             val = m.group()
@@ -375,7 +409,7 @@ class LexicalAnalyzer:
         
         # Decimal integer
         if self.language == "Python":
-            int_pattern = r'\d+(_\d+)*'
+            int_pattern = r'\d+(?:_\d+)*'
         else:
             int_pattern = r'\d+'
         m = re.match(int_pattern, self.code[self.idx:])
@@ -394,7 +428,7 @@ class LexicalAnalyzer:
         start_line = self.line
         start_col = self.col
         
-        # Sort operators by length (longest first) for maximal munch
+        # Sort operators by length (longest first)
         operators = sorted(ALL_OPERATORS, key=len, reverse=True)
         
         for op in operators:
@@ -454,9 +488,8 @@ class LexicalAnalyzer:
         start_col = self.col
         
         if self.idx < len(self.code):
-            # Special handling for Python's >>> operator (which doesn't exist)
+            # Special handling for Python's >>> (three separate operators)
             if self.code[self.idx] == '>' and self.idx + 2 < len(self.code) and self.code[self.idx:self.idx+3] == '>>>':
-                # This is three separate > operators in Python
                 self.add_token('Operator', '>', start_line, start_col)
                 self.idx += 1
                 self.col += 1
@@ -518,7 +551,7 @@ if analyze and code:
     with col2:
         st.subheader("Token Statistics")
         if not df.empty:
-            # Filter out error types for the chart if there are too many
+            # Filter out error types for cleaner chart
             chart_data = df[~df['type'].str.contains('Lexical Error', na=False)]
             if not chart_data.empty:
                 st.bar_chart(chart_data['type'].value_counts())
@@ -526,11 +559,10 @@ if analyze and code:
     st.subheader("Lexical Errors")
     if analyzer.errors:
         st.error(f"{len(analyzer.errors)} lexical error(s) detected")
-        # Show first 20 errors to avoid clutter
-        for i, e in enumerate(analyzer.errors[:20]):
-            st.write(f"❌ '{e['value']}' - {e['error']} (Line {e['line']}, Col {e['col']})")
-        if len(analyzer.errors) > 20:
-            st.write(f"... and {len(analyzer.errors) - 20} more errors")
+        for e in analyzer.errors:
+            # Truncate very long error values for display
+            display_value = e['value'] if len(str(e['value'])) < 50 else str(e['value'])[:50] + "..."
+            st.write(f"❌ '{display_value}' - {e['error']} (Line {e['line']}, Col {e['col']})")
     else:
         st.success("No lexical errors detected")
     
