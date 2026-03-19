@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 # -----------------------------
-# Page Config (Called only once)
+# Page Config
 # -----------------------------
 st.set_page_config(page_title="Lexical Analyzer (CD Theory)", layout="wide")
 
@@ -30,132 +30,213 @@ PYTHON_KEYWORDS = {
 }
 
 # -----------------------------
-# Operator Sets
+# Operator Sets — strictly separated by language
+# NOTE: 'and', 'or', 'not' are Python keyword-operators; handled via keyword
+#       matching so they are NOT listed as operator symbols here.
 # -----------------------------
 JAVA_OPERATORS = {
-    '=', '+', '-', '*', '/', '%', '++', '--', '==', '!=', '>', '<', '>=', '<=',
-    '&&', '||', '!', '&', '|', '^', '~', '<<', '>>', '>>>', '+=', '-=',
-    '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '>>>=', '->', '::',
+    '>>>=', '>>=', '<<=',
+    '**', '//', '==', '!=', '>=', '<=', '&&', '||', '++', '--',
+    '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<', '>>', '>>>',
+    '->', '::',
+    '=', '+', '-', '*', '/', '%', '>', '<',
+    '!', '&', '|', '^', '~',
     '?', ':'
 }
 
 PYTHON_OPERATORS = {
-    '=', '+', '-', '*', '/', '%', '**', '//', '==', '!=', '>', '<', '>=', '<=',
-    'and', 'or', 'not', '&', '|', '^', '~', '<<', '>>', '+=', '-=', '*=',
-    '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '@', ':=', '...'
+    '<<=', '>>=',
+    '**', '//', '==', '!=', '>=', '<=', '<<', '>>',
+    '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**=', '//=', '@=',
+    ':=', '...',
+    '=', '+', '-', '*', '/', '%', '>', '<',
+    '&', '|', '^', '~', '@'
 }
 
-ALL_OPERATORS = JAVA_OPERATORS | PYTHON_OPERATORS
-SEPARATORS = {';', ',', '(', ')', '{', '}', '[', ']', '.', ':', '@'}
-PYTHON_ESCAPES = {'\\n', '\\t', '\\\\', '\\\'', '\\"', '\\r', '\\b', '\\f'}
-JAVA_ESCAPES = {'\\n', '\\t', '\\\\', '\\\'', '\\"', '\\r', '\\b', '\\f'}
+# Separators are also language-specific
+# '@' is Python-only (decorator prefix); '#' is Python-only (comment)
+JAVA_SEPARATORS  = {';', ',', '(', ')', '{', '}', '[', ']', '.'}
+PYTHON_SEPARATORS = {';', ',', '(', ')', '{', '}', '[', ']', '.', ':', '@'}
+
+# Characters that are simply illegal at the lexical level for each language
+# (not operators, not separators, not start of any valid token)
+JAVA_ILLEGAL_CHARS   = {'#', '`', '\\', '$'[1:]}   # $ is legal in Java identifiers, keep it out
+PYTHON_ILLEGAL_CHARS = {'`', '\\'}                  # backslash only illegal outside strings
 
 # -----------------------------
 # Lexical Analyzer Class
 # -----------------------------
 class LexicalAnalyzer:
     def __init__(self, language):
-        self.language = language
-        self.tokens = []
-        self.errors = []
-        self.line = 1
-        self.col = 1
-        self.idx = 0
-        self.code = ""
-        
+        self.language   = language
+        self.tokens     = []
+        self.errors     = []
+        self.line       = 1
+        self.col        = 1
+        self.idx        = 0
+        self.code       = ""
+        # Choose the correct operator / separator sets once
+        if language == "Java":
+            self.operators  = JAVA_OPERATORS
+            self.separators = JAVA_SEPARATORS
+        else:
+            self.operators  = PYTHON_OPERATORS
+            self.separators = PYTHON_SEPARATORS
+
+    # ------------------------------------------------------------------
     def analyze(self, code):
-        self.code = code
+        self.code   = code
         self.tokens = []
         self.errors = []
-        self.line = 1
-        self.col = 1
-        self.idx = 0
-        
+        self.line   = 1
+        self.col    = 1
+        self.idx    = 0
+
         while self.idx < len(self.code):
-            if self.code[self.idx].isspace():
-                if self.code[self.idx] == '\n':
+            ch = self.code[self.idx]
+
+            # Whitespace
+            if ch.isspace():
+                if ch == '\n':
                     self.line += 1
                     self.col = 1
                 else:
                     self.col += 1
                 self.idx += 1
                 continue
-                
-            matched = (self.match_string() or
-                      self.match_comment() or
-                      self.match_number() or
-                      self.match_operator() or
-                      self.match_separator() or
-                      self.match_identifier() or
-                      self.match_error())
-            
+
+            # '#' in Java is always a lexical error — check BEFORE comment matching
+            if self.language == "Java" and ch == '#':
+                self.add_error('Illegal Character', '#', self.line, self.col)
+                self.idx += 1
+                self.col += 1
+                continue
+
+            matched = (
+                self.match_comment()      or
+                self.match_string()       or
+                self.match_number()       or
+                self.match_operator()     or
+                self.match_separator()    or
+                self.match_identifier()   or
+                self.match_error()
+            )
+
             if not matched:
                 self.idx += 1
                 self.col += 1
+
         return self.tokens
 
+    # ------------------------------------------------------------------
+    # STRING MATCHING
+    # ------------------------------------------------------------------
     def match_string(self):
         start_line, start_col = self.line, self.col
-        prefix, is_raw, is_bytes = "", False, False
-        
+        prefix   = ""
+        is_raw   = False
+
+        # Python string prefixes (r, b, f, u and combinations)
         if self.language == "Python":
-            prefix_match = re.match(r'^[rbfuRBFU]+', self.code[self.idx:])
+            prefix_match = re.match(r'^[rbfuRBFU]{1,3}', self.code[self.idx:])
             if prefix_match:
-                prefix = prefix_match.group()
-                is_raw = 'r' in prefix.lower()
-                is_bytes = 'b' in prefix.lower()
-                self.idx += len(prefix)
-                self.col += len(prefix)
+                candidate = prefix_match.group()
+                # Only consume prefix if immediately followed by a quote
+                after = self.idx + len(candidate)
+                if after < len(self.code) and self.code[after] in ('"', "'"):
+                    prefix  = candidate
+                    is_raw  = 'r' in prefix.lower()
+                    self.idx += len(prefix)
+                    self.col += len(prefix)
 
-        # Triple-quoted strings (Python)
-        for q in ('"""', "'''"):
-            if self.code.startswith(q, self.idx):
-                quote = q
-                self.idx += 3
-                self.col += 3
-                content = ""
-                while self.idx < len(self.code):
-                    if self.code.startswith(quote, self.idx):
-                        self.idx += 3
-                        self.col += 3
-                        self.add_token('String', prefix + quote + content + quote, start_line, start_col)
-                        return True
-                    char = self.code[self.idx]
-                    content += char
-                    if char == '\n': self.line += 1; self.col = 1
-                    else: self.col += 1
-                    self.idx += 1
-                self.add_error('Unterminated String', prefix + quote + content, start_line, start_col)
-                return True
+        # Java character literal  'x'
+        if self.language == "Java" and self.idx < len(self.code) and self.code[self.idx] == "'":
+            return self._match_java_char_literal(start_line, start_col)
 
-        # Single/Double-quoted strings
+        # Triple-quoted strings (Python only)
+        if self.language == "Python":
+            for q in ('"""', "'''"):
+                if self.code.startswith(q, self.idx):
+                    self.idx += 3; self.col += 3
+                    content = ""
+                    while self.idx < len(self.code):
+                        if self.code.startswith(q, self.idx):
+                            self.idx += 3; self.col += 3
+                            self.add_token('String', prefix + q + content + q, start_line, start_col)
+                            return True
+                        ch = self.code[self.idx]
+                        content += ch
+                        if ch == '\n': self.line += 1; self.col = 1
+                        else: self.col += 1
+                        self.idx += 1
+                    self.add_error('Unterminated String', prefix + q + content, start_line, start_col)
+                    return True
+
+        # Regular single / double quoted strings
         if self.idx < len(self.code) and self.code[self.idx] in ('"', "'"):
             quote = self.code[self.idx]
             self.idx += 1; self.col += 1
             content = ""
             while self.idx < len(self.code):
-                if not is_raw and self.code[self.idx] == '\\':
-                    content += self.code[self.idx:self.idx+2]
+                ch = self.code[self.idx]
+                # Escape sequence
+                if not is_raw and ch == '\\':
+                    esc = self.code[self.idx: self.idx + 2]
+                    content += esc
                     self.idx += 2; self.col += 2
                     continue
-                if self.code[self.idx] == quote:
+                # Closing quote
+                if ch == quote:
                     self.idx += 1; self.col += 1
                     self.add_token('String', prefix + quote + content + quote, start_line, start_col)
                     return True
-                if self.code[self.idx] == '\n':
-                    if self.language == "Java":
-                        self.add_error('Unterminated String', prefix + quote + content, start_line, start_col)
-                        return True
-                    self.line += 1; self.col = 1
-                else: self.col += 1
-                content += self.code[self.idx]
+                # Newline inside string
+                if ch == '\n':
+                    # Java strings cannot span lines
+                    self.add_error('Unterminated String', prefix + quote + content, start_line, start_col)
+                    return True
+                content += ch
+                self.col += 1
                 self.idx += 1
             self.add_error('Unterminated String', prefix + quote + content, start_line, start_col)
             return True
+
         return False
 
+    def _match_java_char_literal(self, start_line, start_col):
+        """Java single-character literals: 'a', '\\n', etc."""
+        self.idx += 1; self.col += 1   # consume opening '
+        content = "'"
+        closed  = False
+        while self.idx < len(self.code):
+            ch = self.code[self.idx]
+            if ch == '\\':
+                esc = self.code[self.idx: self.idx + 2]
+                content += esc
+                self.idx += 2; self.col += 2
+                continue
+            if ch == "'":
+                content += "'"
+                self.idx += 1; self.col += 1
+                closed = True
+                break
+            if ch == '\n':
+                break
+            content += ch
+            self.idx += 1; self.col += 1
+        if closed:
+            self.add_token('CharLiteral', content, start_line, start_col)
+        else:
+            self.add_error('Unterminated Char Literal', content, start_line, start_col)
+        return True
+
+    # ------------------------------------------------------------------
+    # COMMENT MATCHING
+    # ------------------------------------------------------------------
     def match_comment(self):
         start_line, start_col = self.line, self.col
+
+        # Python single-line comment
         if self.language == "Python" and self.code[self.idx] == '#':
             comment = ""
             while self.idx < len(self.code) and self.code[self.idx] != '\n':
@@ -163,51 +244,87 @@ class LexicalAnalyzer:
                 self.idx += 1; self.col += 1
             self.add_token('Comment', comment, start_line, start_col)
             return True
-        elif self.language == "Java":
-            if self.code.startswith('//', self.idx):
-                comment = ""
-                while self.idx < len(self.code) and self.code[self.idx] != '\n':
-                    comment += self.code[self.idx]
-                    self.idx += 1; self.col += 1
-                self.add_token('Comment', comment, start_line, start_col)
-                return True
-            elif self.code.startswith('/*', self.idx):
-                comment = ""
-                while self.idx < len(self.code):
-                    if self.code.startswith('*/', self.idx):
-                        comment += '*/'
-                        self.idx += 2; self.col += 2
-                        self.add_token('Comment', comment, start_line, start_col)
-                        return True
-                    char = self.code[self.idx]
-                    comment += char
-                    if char == '\n': self.line += 1; self.col = 1
-                    else: self.col += 1
-                    self.idx += 1
-                self.add_error('Unterminated Comment', comment, start_line, start_col)
-                return True
+
+        # Java single-line comment
+        if self.language == "Java" and self.code.startswith('//', self.idx):
+            comment = ""
+            while self.idx < len(self.code) and self.code[self.idx] != '\n':
+                comment += self.code[self.idx]
+                self.idx += 1; self.col += 1
+            self.add_token('Comment', comment, start_line, start_col)
+            return True
+
+        # Java multi-line comment
+        if self.language == "Java" and self.code.startswith('/*', self.idx):
+            comment = ""
+            while self.idx < len(self.code):
+                if self.code.startswith('*/', self.idx):
+                    comment += '*/'
+                    self.idx += 2; self.col += 2
+                    self.add_token('Comment', comment, start_line, start_col)
+                    return True
+                ch = self.code[self.idx]
+                comment += ch
+                if ch == '\n': self.line += 1; self.col = 1
+                else: self.col += 1
+                self.idx += 1
+            self.add_error('Unterminated Comment', comment, start_line, start_col)
+            return True
+
         return False
 
+    # ------------------------------------------------------------------
+    # NUMBER MATCHING
+    # ------------------------------------------------------------------
     def match_number(self):
         start_line, start_col = self.line, self.col
+
+        # Must start with a digit or a dot followed by a digit
+        if not (self.code[self.idx].isdigit() or
+                (self.code[self.idx] == '.' and self.idx + 1 < len(self.code)
+                 and self.code[self.idx + 1].isdigit())):
+            return False
+
         patterns = [
-            (r'0[xX][0-9a-fA-F_]+', 'HexInteger'),
-            (r'0[bB][01_]+', 'BinaryInteger'),
-            (r'0[oO][0-7_]+', 'OctalInteger'),
-            (r'\d+\.\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|\d+[eE][+-]?\d+', 'Float'),
-            (r'\d+(?:_\d+)*', 'Integer')
+            # Hex / Bin / Oct — integers only (Java & Python)
+            (r'0[xX][0-9a-fA-F][0-9a-fA-F_]*[lLjJ]?', 'HexInteger'),
+            (r'0[bB][01][01_]*[lLjJ]?',                 'BinaryInteger'),
+            (r'0[oO][0-7][0-7_]*[lLjJ]?',               'OctalInteger'),
+            # Float / complex
+            (r'\d[\d_]*\.[\d_]*(?:[eE][+-]?\d[\d_]*)?[fFdDjJ]?', 'Float'),
+            (r'\.\d[\d_]*(?:[eE][+-]?\d[\d_]*)?[fFdDjJ]?',       'Float'),
+            (r'\d[\d_]*[eE][+-]?\d[\d_]*[fFdDjJ]?',              'Float'),
+            # Plain integer (with optional Java long suffix or Python complex j)
+            (r'\d[\d_]*[lLjJ]?',                                   'Integer'),
         ]
+
         for pattern, ttype in patterns:
             m = re.match(pattern, self.code[self.idx:])
             if m:
                 val = m.group()
+                # Make sure we didn't accidentally eat into an identifier
+                end = self.idx + len(val)
+                if end < len(self.code) and (self.code[end].isalpha() or self.code[end] == '_'):
+                    # e.g. "1abc" — stop at the digit part, the rest is an error
+                    # Find longest purely digit+underscore+suffix portion
+                    m2 = re.match(r'[\d_]+[lLjJfFdD]?', self.code[self.idx:])
+                    if m2:
+                        val = m2.group()
+                        end = self.idx + len(val)
+                        if end < len(self.code) and (self.code[end].isalpha() or self.code[end] == '_'):
+                            # The digit portion alone is fine; the letter suffix will be its own error
+                            pass
                 self.idx += len(val); self.col += len(val)
                 self.add_token(ttype, val, start_line, start_col)
                 return True
+
         return False
 
+    # ------------------------------------------------------------------
+    # OPERATOR MATCHING  (language-specific set)
+    # ------------------------------------------------------------------
     def match_operator(self):
-        ops = sorted(ALL_OPERATORS, key=len, reverse=True)
+        ops = sorted(self.operators, key=len, reverse=True)
         for op in ops:
             if self.code.startswith(op, self.idx):
                 self.add_token('Operator', op, self.line, self.col)
@@ -215,60 +332,121 @@ class LexicalAnalyzer:
                 return True
         return False
 
+    # ------------------------------------------------------------------
+    # SEPARATOR MATCHING  (language-specific set)
+    # ------------------------------------------------------------------
     def match_separator(self):
-        if self.code[self.idx] in SEPARATORS:
+        if self.code[self.idx] in self.separators:
             self.add_token('Separator', self.code[self.idx], self.line, self.col)
             self.idx += 1; self.col += 1
             return True
         return False
 
+    # ------------------------------------------------------------------
+    # IDENTIFIER / KEYWORD MATCHING
+    # ------------------------------------------------------------------
     def match_identifier(self):
-        pattern = r'[^\d\W]\w*' if self.language == "Python" else r'[A-Za-z_$][A-Za-z0-9_$]*'
+        # Java identifiers may start with $ or _; Python uses Unicode \w
+        if self.language == "Java":
+            pattern = r'[A-Za-z_$][A-Za-z0-9_$]*'
+        else:
+            pattern = r'[^\d\W]\w*'
+
         m = re.match(pattern, self.code[self.idx:])
         if m:
-            val = m.group()
+            val      = m.group()
             keywords = JAVA_KEYWORDS if self.language == "Java" else PYTHON_KEYWORDS
-            self.add_token('Keyword' if val in keywords else 'Identifier', val, self.line, self.col)
+            ttype    = 'Keyword' if val in keywords else 'Identifier'
+            self.add_token(ttype, val, self.line, self.col)
             self.idx += len(val); self.col += len(val)
             return True
         return False
 
+    # ------------------------------------------------------------------
+    # CATCH-ALL ERROR
+    # ------------------------------------------------------------------
     def match_error(self):
-        self.add_error('Illegal Character', self.code[self.idx], self.line, self.col)
+        ch = self.code[self.idx]
+        self.add_error('Illegal Character', ch, self.line, self.col)
         self.idx += 1; self.col += 1
         return True
 
+    # ------------------------------------------------------------------
     def add_token(self, ttype, val, line, col):
-        self.tokens.append({'value': val, 'type': ttype, 'line': line, 'col': col})
+        self.tokens.append({'Value': val, 'Type': ttype, 'Line': line, 'Col': col})
 
     def add_error(self, etype, val, line, col):
-        self.tokens.append({'value': val, 'type': f'Lexical Error ({etype})', 'line': line, 'col': col})
-        self.errors.append({'value': val, 'error': etype, 'line': line, 'col': col})
+        label = f'Lexical Error ({etype})'
+        self.tokens.append({'Value': val, 'Type': label, 'Line': line, 'Col': col})
+        self.errors.append({'Value': val, 'Error': etype, 'Line': line, 'Col': col})
 
-# -----------------------------
-# UI Logic
-# -----------------------------
-st.title("🧠 Complete Lexical Analyzer — All Edge Cases Covered")
-st.write("Supports Python and Java analysis with full line/column tracking.")
 
-language = st.selectbox("Select Language", ["Python", "Java"])
-code_input = st.text_area("Enter your code here", height=300)
+# =============================================================================
+# UI
+# =============================================================================
+st.title("🧠 Lexical Analyzer — Java & Python")
+st.caption("Strictly lexical analysis: tokens, errors, line/column tracking. Comments excluded from stats.")
 
-if st.button("Analyze Code"):
-    if code_input:
-        analyzer = LexicalAnalyzer(language)
-        results = analyzer.analyze(code_input)
-        df = pd.DataFrame(results)
-        
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.subheader("Token Stream")
-            st.dataframe(df, use_container_width=True)
-        with c2:
-            st.subheader("Stats")
-            st.write(f"**Total Tokens:** {len(results)}")
-            st.write(f"**Errors:** {len(analyzer.errors)}")
-            if not df.empty:
-                st.bar_chart(df['type'].value_counts())
-    else:
+col_lang, col_btn = st.columns([3, 1])
+with col_lang:
+    language = st.selectbox("Select Language", ["Python", "Java"])
+code_input = st.text_area("Enter your code here", height=300,
+                           placeholder="Paste Java or Python source code…")
+
+analyze_clicked = st.button("⚡ Analyze Code", type="primary")
+
+if analyze_clicked:
+    if not code_input.strip():
         st.warning("Please enter some code first.")
+    else:
+        analyzer = LexicalAnalyzer(language)
+        all_tokens = analyzer.analyze(code_input)
+
+        # Separate comments from the real token stream
+        non_comment_tokens = [t for t in all_tokens if t['Type'] != 'Comment']
+        comment_tokens      = [t for t in all_tokens if t['Type'] == 'Comment']
+        error_tokens        = [t for t in all_tokens if t['Type'].startswith('Lexical Error')]
+
+        df_all      = pd.DataFrame(all_tokens)
+        df_no_cmt   = pd.DataFrame(non_comment_tokens) if non_comment_tokens else pd.DataFrame()
+        df_errors   = pd.DataFrame(analyzer.errors)    if analyzer.errors    else pd.DataFrame()
+        df_comments = pd.DataFrame(comment_tokens)     if comment_tokens     else pd.DataFrame()
+
+        # ── Token Stream ──────────────────────────────────────────────
+        st.subheader("📋 Token Stream (excluding comments)")
+        if not df_no_cmt.empty:
+            st.dataframe(df_no_cmt, use_container_width=True)
+        else:
+            st.info("No tokens found.")
+
+        # ── Stats + Chart ─────────────────────────────────────────────
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.subheader("📊 Summary")
+            total_real  = len(non_comment_tokens)
+            total_cmts  = len(comment_tokens)
+            total_errs  = len(error_tokens)
+            total_all   = len(all_tokens)
+
+            st.metric("Total Tokens (excl. comments)", total_real)
+            st.metric("Comments",                       total_cmts)
+            st.metric("Lexical Errors",                 total_errs)
+            st.metric("Grand Total (incl. comments)",   total_all)
+
+        with c2:
+            st.subheader("🔢 Token Type Distribution (excl. comments)")
+            if not df_no_cmt.empty:
+                counts = df_no_cmt['Type'].value_counts()
+                st.bar_chart(counts)
+
+        # ── Errors ────────────────────────────────────────────────────
+        if not df_errors.empty:
+            st.subheader("🚨 Lexical Errors")
+            st.dataframe(df_errors, use_container_width=True)
+        else:
+            st.success("✅ No lexical errors detected.")
+
+        # ── Comments (collapsed) ──────────────────────────────────────
+        if not df_comments.empty:
+            with st.expander(f"💬 Comments ({total_cmts} found — excluded from stats)"):
+                st.dataframe(df_comments, use_container_width=True)
