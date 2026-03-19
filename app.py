@@ -413,7 +413,7 @@ if analyze_clicked:
         df_comments = pd.DataFrame(comment_tokens)     if comment_tokens     else pd.DataFrame()
 
         # ── Token Stream ──────────────────────────────────────────────
-        st.subheader("📋 Token Stream (excluding comments)")
+        st.subheader("📋 Token Stream")
         if not df_no_cmt.empty:
             st.dataframe(df_no_cmt, use_container_width=True)
         else:
@@ -428,13 +428,11 @@ if analyze_clicked:
             total_errs  = len(error_tokens)
             total_all   = len(all_tokens)
 
-            st.metric("Total Tokens (excl. comments)", total_real)
-            st.metric("Comments",                       total_cmts)
-            st.metric("Lexical Errors",                 total_errs)
-            st.metric("Grand Total (incl. comments)",   total_all)
+            st.metric("Total Tokens", total_real)
+            st.metric("Lexical Errors", total_errs)
 
         with c2:
-            st.subheader("🔢 Token Type Distribution (excl. comments)")
+            st.subheader("🔢 Token Type Distribution")
             if not df_no_cmt.empty:
                 counts = df_no_cmt['Type'].value_counts()
                 st.bar_chart(counts)
